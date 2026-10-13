@@ -1,0 +1,16 @@
+envs/
+models/
+data/
+cache/
+results/
+checkpoints/
+eval_results/
+logs/
+wandb/
+__pycache__/
+*.pyc
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.parquet

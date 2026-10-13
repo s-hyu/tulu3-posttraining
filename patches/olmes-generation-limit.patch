@@ -1,0 +1,16 @@
+diff --git a/oe_eval/models/eleuther_huggingface.py b/oe_eval/models/eleuther_huggingface.py
+index e1356e0..d3fef9c 100644
+--- a/oe_eval/models/eleuther_huggingface.py
++++ b/oe_eval/models/eleuther_huggingface.py
+@@ -668,6 +668,11 @@ class HFLM_Verbose(HFLM):
+             if "max_length" not in kwargs:
+                 kwargs["max_length"] = context_enc.shape[1] + max_gen_toks
+ 
++            # Qwen's generation_config supplies max_new_tokens=2048.  In
++            # Transformers 5 this takes precedence over max_length, so pass
++            # OLMES's task-level limit explicitly (e.g. GSM8K's 512 tokens).
++            kwargs.setdefault("max_new_tokens", max_gen_toks)
++
+             # perform batched generation, with args for logit scores
+             kwargs["output_scores"] = True
+             kwargs["return_dict_in_generate"] = True

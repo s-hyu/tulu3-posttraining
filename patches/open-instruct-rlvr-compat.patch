@@ -1,0 +1,78 @@
+diff --git a/open_instruct/environments/tools/generic_mcp.py b/open_instruct/environments/tools/generic_mcp.py
+index 08f2e39..cc9c54c 100644
+--- a/open_instruct/environments/tools/generic_mcp.py
++++ b/open_instruct/environments/tools/generic_mcp.py
+@@ -13,7 +13,12 @@ from typing import Any, ClassVar
+ from mcp import ClientSession
+ from mcp.client.sse import sse_client
+ from mcp.client.stdio import StdioServerParameters, stdio_client
+-from mcp.client.streamable_http import streamablehttp_client
++try:
++    from mcp.client.streamable_http import streamablehttp_client
++except ImportError:
++    # MCP renamed this client in newer releases.  Keep compatibility with
++    # both APIs because this module is imported even when no MCP tool is used.
++    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
+ from mcp.types import CallToolResult
+ 
+ from open_instruct import logger_utils
+diff --git a/open_instruct/grpo_fast.py b/open_instruct/grpo_fast.py
+index c8f2689..3663857 100644
+--- a/open_instruct/grpo_fast.py
++++ b/open_instruct/grpo_fast.py
+@@ -70,7 +70,7 @@ import torch.utils.data
+ import wandb
+ from datasets import Dataset
+ from huggingface_hub import HfApi
+-from peft import PeftModel, get_peft_model_state_dict
++from peft import LoraConfig, PeftModel, TaskType, get_peft_model, get_peft_model_state_dict
+ from ray.util import queue as ray_queue
+ from ray.util.placement_group import PlacementGroup, placement_group
+ from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
+@@ -341,6 +341,11 @@ class PolicyTrainerRayProcess(RayProcess):
+         ds_config["train_micro_batch_size_per_gpu"] = args.per_device_train_batch_size
+         ds_config["gradient_accumulation_steps"] = 1
+         ds_config["checkpoint"] = {"load_universal": args.deepspeed_checkpoint_load_universal}
++        if args.deepspeed_offload_optimizer:
++            # This training path supplies AdamW directly.  DeepSpeed otherwise
++            # rejects optimizer offload before initialization, despite a valid
++            # CPU-offload configuration.
++            ds_config["zero_force_ds_cpu_optimizer"] = False
+         # @vwxyzjn: MAGIC: it's actually needed to initialize this `dschf`, so
+         # https://huggingface.co/docs/transformers/deepspeed#non-trainer-deepspeed-integration
+         # next line instructs transformers to partition the model directly over multiple gpus using
+@@ -368,6 +373,19 @@ class PolicyTrainerRayProcess(RayProcess):
+         self._model_name_or_path = model_config.model_name_or_path
+         self.policy.config.use_cache = False
+         disable_dropout_in_model(self.policy)
++        if model_config.use_peft:
++            peft_config = LoraConfig(
++                task_type=TaskType.CAUSAL_LM,
++                inference_mode=False,
++                r=model_config.lora_r,
++                lora_alpha=model_config.lora_alpha,
++                lora_dropout=model_config.lora_dropout,
++                target_modules=model_config.lora_target_modules
++                or ["q_proj", "o_proj", "v_proj", "k_proj", "gate_proj", "up_proj", "down_proj"],
++                modules_to_save=model_config.lora_modules_to_save,
++            )
++            self.policy = get_peft_model(self.policy, peft_config)
++            self.policy.print_trainable_parameters()
+         self.policy.gradient_checkpointing_enable()
+         if args.set_weight_decay_on_bias_and_norm:
+             optim_params = get_optimizer_grouped_parameters(self.policy, args.weight_decay)
+@@ -2060,7 +2078,13 @@ def _discover_tools_from_datasets(dataset_mixer_list: list[str], dataset_mixer_l
+     for i in range(0, len(dataset_mixer_list), 2):
+         dataset_name = dataset_mixer_list[i]
+         split = splits[i // 2]
+-        ds = datasets.load_dataset(dataset_name, split=split)
++        # RLVR experiments may use a locally prepared Parquet file.  Match the
++        # dataset loader used later in the training path so tool discovery does
++        # not mistakenly treat that filesystem path as a Hub repository name.
++        if os.path.exists(dataset_name) and dataset_name.endswith(".parquet"):
++            ds = datasets.load_dataset("parquet", data_files=dataset_name, split=split)
++        else:
++            ds = datasets.load_dataset(dataset_name, split=split)
+         if TOOLS_COLUMN_KEY in ds.column_names:
+             for tools in ds[TOOLS_COLUMN_KEY]:
+                 if tools:
