@@ -72,4 +72,3 @@ bash scripts/run_olmes_sft_full.sh
 
 - [正式实验报告](final_experiment_report.md)
 - [实验日记](experiment_diary.md)
-- [实验日记 Word 版](experiment_diary.docx)
